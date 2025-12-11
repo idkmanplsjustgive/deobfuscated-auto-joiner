@@ -1,70 +1,327 @@
---// Hub GUI Script
--- Place this in a LocalScript inside StarterPlayerScripts
-
--- Create ScreenGui
-local player = game.Players.LocalPlayer
-local gui = Instance.new("ScreenGui")
-gui.Name = "RoleHub"
-gui.Parent = player:WaitForChild("PlayerGui")
-
--- Create main frame
-local frame = Instance.new("Frame")
-frame.Size = UDim2.new(0, 200, 0, 150)
-frame.Position = UDim2.new(0, 20, 0, 100)
-frame.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
-frame.Parent = gui
-
--- Utility function to make buttons
-local function makeButton(name, posY, callback)
-    local btn = Instance.new("TextButton")
-    btn.Size = UDim2.new(1, -20, 0, 30)
-    btn.Position = UDim2.new(0, 10, 0, posY)
-    btn.BackgroundColor3 = Color3.fromRGB(70, 70, 70)
-    btn.TextColor3 = Color3.fromRGB(255, 255, 255)
-    btn.Text = name
-    btn.Parent = frame
-    btn.MouseButton1Click:Connect(callback)
-end
-
--- ESP function
-local function applyESP(color)
-    for _, plr in pairs(game.Players:GetPlayers()) do
-        if plr ~= player and plr.Character and plr.Character:FindFirstChild("HumanoidRootPart") then
-            local hrp = plr.Character.HumanoidRootPart
-            if not hrp:FindFirstChild("ESPHighlight") then
-                local highlight = Instance.new("Highlight")
-                highlight.Name = "ESPHighlight"
-                highlight.FillColor = color
-                highlight.OutlineColor = color
-                highlight.Parent = hrp
-            else
-                hrp.ESPHighlight.FillColor = color
-                hrp.ESPHighlight.OutlineColor = color
-            end
-        end
-    end
-end
-
--- Noclip toggle
-local noclipEnabled = false
+--// SERVICES
+local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
+local Workspace = game:GetService("Workspace")
+local Lighting = game:GetService("Lighting")
+local UserInputService = game:GetService("UserInputService")
 
-local function toggleNoclip()
-    noclipEnabled = not noclipEnabled
-end
+local LocalPlayer = Players.LocalPlayer
+local Camera = Workspace.CurrentCamera
+local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
 
-RunService.Stepped:Connect(function()
-    if noclipEnabled and player.Character then
-        for _, part in pairs(player.Character:GetDescendants()) do
-            if part:IsA("BasePart") then
-                part.CanCollide = false
-            end
-        end
-    end
+---------------------------------------------------
+-- GUI CREATION
+---------------------------------------------------
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "AdminESP_GUI"
+screenGui.Parent = PlayerGui
+screenGui.ResetOnSpawn = false
+
+local mainFrame = Instance.new("Frame")
+mainFrame.Parent = screenGui
+mainFrame.Size = UDim2.new(0, 220, 0, 350)
+mainFrame.Position = UDim2.new(0.02, 0, 0.25, 0)
+mainFrame.BackgroundColor3 = Color3.fromRGB(0, 122, 255)
+mainFrame.BorderSizePixel = 0
+Instance.new("UICorner", mainFrame)
+
+-- Title
+local title = Instance.new("TextLabel")
+title.Parent = mainFrame
+title.Size = UDim2.new(1, -10, 0, 30)
+title.Position = UDim2.new(0,5,0,5)
+title.BackgroundTransparency = 1
+title.Text = "MADE BY CHATGPT ARIS"
+title.TextColor3 = Color3.new(1,1,1)
+title.Font = Enum.Font.GothamBold
+title.TextScaled = true
+title.TextXAlignment = Enum.TextXAlignment.Center
+
+---------------------------------------------------
+-- OPEN/CLOSE BUTTON
+---------------------------------------------------
+local toggleGuiBtn = Instance.new("TextButton")
+toggleGuiBtn.Parent = screenGui
+toggleGuiBtn.Size = UDim2.new(0, 120, 0, 35)
+toggleGuiBtn.Position = UDim2.new(0.02, 0, 0.2, 0)
+toggleGuiBtn.BackgroundColor3 = Color3.fromRGB(30,30,30)
+toggleGuiBtn.TextColor3 = Color3.fromRGB(0,122,255)
+toggleGuiBtn.Text = "Open/Close GUI"
+toggleGuiBtn.Font = Enum.Font.GothamBold
+toggleGuiBtn.TextScaled = true
+Instance.new("UICorner", toggleGuiBtn)
+
+local guiVisible = true
+toggleGuiBtn.MouseButton1Click:Connect(function()
+	guiVisible = not guiVisible
+	mainFrame.Visible = guiVisible
 end)
 
--- Buttons
-makeButton("ESP Imposter (Red)", 10, function() applyESP(Color3.fromRGB(255, 0, 0)) end)
-makeButton("ESP Neutral (White)", 50, function() applyESP(Color3.fromRGB(255, 255, 255)) end)
-makeButton("ESP Crewmate (Green)", 90, function() applyESP(Color3.fromRGB(0, 255, 0)) end)
-makeButton("Toggle Noclip", 130, toggleNoclip)
+---------------------------------------------------
+-- BUTTONS
+---------------------------------------------------
+local function createButton(text, y)
+	local btn = Instance.new("TextButton")
+	btn.Parent = mainFrame
+	btn.Size = UDim2.new(1, -10, 0, 35)
+	btn.Position = UDim2.new(0,5,0,y)
+	btn.BackgroundColor3 = Color3.fromRGB(30,30,30)
+	btn.TextColor3 = Color3.fromRGB(0, 122, 255)
+	btn.Text = text
+	btn.Font = Enum.Font.GothamBold
+	btn.TextScaled = true
+	Instance.new("UICorner", btn)
+	return btn
+end
+
+local noclipBtn = createButton("Noclip: OFF", 45)
+local zoomBtn = createButton("Max Zoom: OFF", 85)
+local visionBtn = createButton("Full Vision: OFF", 125)
+local espBtn = createButton("ESP: OFF", 165)
+
+---------------------------------------------------
+-- TOGGLE VARIABLES
+---------------------------------------------------
+local noclipEnabled, zoomEnabled, visionEnabled, espEnabled = false, false, false, false
+local oldFogStart, oldFogEnd, oldAmbient
+local ESP_BOXES = {}
+local ESP_LINES = {}
+
+---------------------------------------------------
+-- ROLE COLORS
+---------------------------------------------------
+local ROLE_COLORS = {
+	Crewmate = Color3.fromRGB(0, 255, 0),
+	Imposter = Color3.fromRGB(255, 0, 0),
+	Neutral  = Color3.fromRGB(255, 165, 0) -- ORANGE
+}
+
+local NEUTRAL_ROLES = {
+	"Jester","Corrupted Witness","Chimera","Medusa","Exploder","Assassin","Novisor"
+}
+
+local function getRoleColor(plr)
+	local ps = plr:FindFirstChild("PublicStates")
+	if ps then
+		local role = ps:FindFirstChild("Role")
+		if role then
+			if ROLE_COLORS[role.Value] then
+				return ROLE_COLORS[role.Value]
+			elseif table.find(NEUTRAL_ROLES, role.Value) then
+				return ROLE_COLORS["Neutral"]
+			end
+		end
+	end
+	return Color3.fromRGB(255,255,255)
+end
+
+---------------------------------------------------
+-- TOGGLE FUNCTIONS
+---------------------------------------------------
+-- Noclip
+noclipBtn.MouseButton1Click:Connect(function()
+	noclipEnabled = not noclipEnabled
+	noclipBtn.Text = "Noclip: " .. (noclipEnabled and "ON" or "OFF")
+end)
+RunService.Stepped:Connect(function()
+	if noclipEnabled then
+		local char = LocalPlayer.Character
+		if char then
+			for _, part in ipairs(char:GetDescendants()) do
+				if part:IsA("BasePart") then
+					part.CanCollide = false
+				end
+			end
+		end
+	end
+end)
+
+-- MaxZoom
+zoomBtn.MouseButton1Click:Connect(function()
+	zoomEnabled = not zoomEnabled
+	if zoomEnabled then
+		zoomBtn.Text = "Max Zoom: ON"
+		LocalPlayer.CameraMaxZoomDistance = 1000
+	else
+		zoomBtn.Text = "Max Zoom: OFF"
+		LocalPlayer.CameraMaxZoomDistance = 400
+	end
+end)
+
+-- Full Vision
+visionBtn.MouseButton1Click:Connect(function()
+	visionEnabled = not visionEnabled
+	if visionEnabled then
+		visionBtn.Text = "Full Vision: ON"
+		oldFogStart = Lighting.FogStart
+		oldFogEnd = Lighting.FogEnd
+		oldAmbient = Lighting.Ambient
+		Lighting.FogStart = 0
+		Lighting.FogEnd = 100000
+		Lighting.Ambient = Color3.fromRGB(255,255,255)
+	else
+		visionBtn.Text = "Full Vision: OFF"
+		Lighting.FogStart = oldFogStart or 0
+		Lighting.FogEnd = oldFogEnd or 1000
+		Lighting.Ambient = oldAmbient or Color3.fromRGB(170,170,170)
+	end
+end)
+
+-- ESP
+espBtn.MouseButton1Click:Connect(function()
+	espEnabled = not espEnabled
+	espBtn.Text = "ESP: " .. (espEnabled and "ON" or "OFF")
+	if not espEnabled then
+		for _, box in pairs(ESP_BOXES) do if box then box:Destroy() end end
+		for _, line in pairs(ESP_LINES) do if line then line:Remove() end end
+		ESP_BOXES = {}
+		ESP_LINES = {}
+	end
+end)
+
+---------------------------------------------------
+-- ESP & TRACERS (Smaller boxes)
+---------------------------------------------------
+RunService.RenderStepped:Connect(function()
+	if not espEnabled then return end
+	local screenCenter = Vector2.new(Camera.ViewportSize.X/2, Camera.ViewportSize.Y/2)
+	for _, plr in pairs(Players:GetPlayers()) do
+		if plr ~= LocalPlayer and plr.Character and plr.Character:FindFirstChild("HumanoidRootPart") then
+			local hrp = plr.Character.HumanoidRootPart
+			local screenPos, onScreen = Camera:WorldToViewportPoint(hrp.Position)
+			if onScreen then
+				-- Billboard
+				local box = ESP_BOXES[plr]
+				if not box then
+					box = Instance.new("BillboardGui")
+					box.Name = "ESPBox"
+					box.Adornee = hrp
+					box.Size = UDim2.new(0,50,0,25)
+					box.StudsOffset = Vector3.new(0,1.5,0)
+					box.AlwaysOnTop = true
+					box.Parent = screenGui
+
+					local txt = Instance.new("TextLabel")
+					txt.Name = "Label"
+					txt.Size = UDim2.new(1,0,1,0)
+					txt.BackgroundTransparency = 1
+					txt.TextScaled = true
+					txt.Font = Enum.Font.GothamBold
+					txt.TextStrokeTransparency = 0.2
+					txt.TextColor3 = getRoleColor(plr)
+					txt.Text = plr.Name
+					txt.Parent = box
+
+					ESP_BOXES[plr] = box
+				else
+					box.Label.TextColor3 = getRoleColor(plr)
+				end
+
+				-- Tracer line
+				local line = ESP_LINES[plr]
+				if not line then
+					line = Drawing.new("Line")
+					line.Visible = true
+					line.Color = getRoleColor(plr)
+					line.Thickness = 2
+					line.Transparency = 1
+					ESP_LINES[plr] = line
+				end
+				line.From = screenCenter
+				line.To = Vector2.new(screenPos.X, screenPos.Y)
+				line.Color = getRoleColor(plr)
+				line.Visible = true
+			else
+				local line = ESP_LINES[plr]
+				if line then line.Visible = false end
+			end
+		end
+	end
+end)
+
+---------------------------------------------------
+-- ROLE TAGS (Role + SubRole)
+---------------------------------------------------
+local function attachTag(plr, char)
+	local torso = char:FindFirstChild("UpperTorso") or char:FindFirstChild("Torso")
+	if not torso then return end
+	local old = torso:FindFirstChild("RoleTag")
+	if old then old:Destroy() end
+	local billboard = Instance.new("BillboardGui")
+	billboard.Name = "RoleTag"
+	billboard.Adornee = torso
+	billboard.Parent = torso
+	billboard.Size = UDim2.new(4,0,1.5,0)
+	billboard.StudsOffset = Vector3.new(0,2.5,0)
+	billboard.AlwaysOnTop = true
+	billboard.MaxDistance = 150
+
+	local roleText = Instance.new("TextLabel")
+	roleText.Name = "RoleText"
+	roleText.Parent = billboard
+	roleText.BackgroundTransparency = 1
+	roleText.Size = UDim2.new(1,0,0.6,0)
+	roleText.Position = UDim2.new(0,0,0.4,0)
+	roleText.Font = Enum.Font.GothamBold
+	roleText.TextScaled = true
+	roleText.TextStrokeTransparency = 0.25
+
+	local subText = Instance.new("TextLabel")
+	subText.Name = "SubRoleText"
+	subText.Parent = billboard
+	subText.BackgroundTransparency = 1
+	subText.Size = UDim2.new(1,0,0.4,0)
+	subText.Position = UDim2.new(0,0,0,0)
+	subText.Font = Enum.Font.GothamBold
+	subText.TextScaled = true
+	subText.TextStrokeTransparency = 0.25
+
+	local function update()
+		local ps = plr:FindFirstChild("PublicStates")
+		if not ps then return end
+		local roleVal = ps:FindFirstChild("Role")
+		local subRoleVal = ps:FindFirstChild("SubRole")
+		roleText.Text = (roleVal and roleVal.Value) or ""
+		if roleVal then
+			if ROLE_COLORS[roleVal.Value] then
+				roleText.TextColor3 = ROLE_COLORS[roleVal.Value]
+			elseif table.find(NEUTRAL_ROLES, roleVal.Value) then
+				roleText.TextColor3 = ROLE_COLORS["Neutral"]
+			else
+				roleText.TextColor3 = Color3.new(1,1,1)
+			end
+		else
+			roleText.TextColor3 = Color3.new(1,1,1)
+		end
+		subText.Text = (subRoleVal and subRoleVal.Value) or ""
+		subText.TextColor3 = roleText.TextColor3
+	end
+
+	local ps = plr:FindFirstChild("PublicStates")
+	if ps then
+		for _, v in ipairs(ps:GetChildren()) do
+			if v:IsA("StringValue") then
+				v.Changed:Connect(update)
+			end
+		end
+		ps.ChildAdded:Connect(function(v)
+			if v:IsA("StringValue") then
+				v.Changed:Connect(update)
+				update()
+			end
+		end)
+	end
+	update()
+end
+
+local function setupPlayer(plr)
+	plr.CharacterAdded:Connect(function(char)
+		attachTag(plr, char)
+	end)
+	if plr.Character then
+		attachTag(plr, plr.Character)
+	end
+end
+
+for _, plr in ipairs(Players:GetPlayers()) do setupPlayer(plr) end
+Players.PlayerAdded:Connect(setupPlayer)
